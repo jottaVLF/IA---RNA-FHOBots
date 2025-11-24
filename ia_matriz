@@ -1,0 +1,88 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.neural_network import MLPClassifier
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from imblearn.pipeline import Pipeline
+from imblearn.over_sampling import SMOTE
+import warnings
+
+# Configuração visual
+sns.set(style="whitegrid")
+warnings.filterwarnings('ignore', category=UserWarning)
+
+# Carregamento
+try:
+    df = pd.read_csv('log_jogo5v5Final.csv')
+    df.columns = df.columns.str.strip() # Correção dos espaços
+except FileNotFoundError:
+    print("Arquivo não encontrado.")
+    exit()
+
+# Definição de Features
+feature_cols = ['bx', 'by']
+teams, robots = ['y', 'b'], range(5)
+for team in teams:
+    for i in robots:
+        feature_cols.append(f'x_{team}{i}')
+        feature_cols.append(f'y_{team}{i}')
+
+available_features = [c for c in feature_cols if c in df.columns]
+robot_targets = ['y0', 'y1', 'y2', 'y3', 'y4']
+
+# Loop Principal
+for robot_name in robot_targets:
+    target_col = f'state_{robot_name}'
+    if target_col not in df.columns: continue
+
+    print(f"\n🤖 --- Processando Robô: {robot_name.upper()} ---")
+
+    # Limpeza específica
+    data = df[available_features + [target_col]].copy()
+    data = data.dropna(subset=[target_col])
+    for col in available_features: data[col] = pd.to_numeric(data[col], errors='coerce')
+    data = data.dropna()
+
+    if data[target_col].nunique() < 2: continue
+
+    # Encoder
+    le = LabelEncoder()
+    y_encoded = le.fit_transform(data[target_col])
+    class_names = le.classes_
+
+    # Divisão
+    X_train, X_test, y_train, y_test = train_test_split(
+        data[available_features], y_encoded, test_size=0.3, random_state=42, stratify=y_encoded
+    )
+
+    # Pipeline (Scaler -> SMOTE -> Rede Neural)
+    pipeline = Pipeline([
+        ('scaler', StandardScaler()),
+        ('smote', SMOTE(random_state=42)),
+        ('mlp', MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=300,
+                              activation='relu', solver='adam', early_stopping=True))
+    ])
+
+    # Treino e Previsão
+    pipeline.fit(X_train, y_train)
+    y_pred = pipeline.predict(X_test)
+
+    # Visualização: Matriz de Confusão
+    cm = confusion_matrix(y_test, y_pred)
+
+    # Normalizar a matriz para ver porcentagens (melhor para classes desbalanceadas)
+    cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm_normalized, annot=True, fmt='.2f', cmap='Blues',
+                xticklabels=class_names, yticklabels=class_names)
+    plt.title(f'Matriz de Confusão Normalizada - Robô {robot_name.upper()}')
+    plt.ylabel('Verdadeiro (Real)')
+    plt.xlabel('Previsto pelo Modelo')
+    plt.tight_layout()
+    plt.show() # Mostra o gráfico na tela
+
+    print(f"Acurácia: {accuracy_score(y_test, y_pred):.2%}")
