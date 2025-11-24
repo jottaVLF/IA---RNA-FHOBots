@@ -1,0 +1,127 @@
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.neural_network import MLPClassifier
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.metrics import accuracy_score, classification_report
+import numpy as np
+import warnings
+
+# Precisamos do pipeline e do SMOTE da biblioteca imblearn
+from imblearn.pipeline import Pipeline
+from imblearn.over_sampling import SMOTE
+
+# Suprimir avisos de convergência do MLP, que podem ser ruidosos
+warnings.filterwarnings('ignore', category=UserWarning)
+
+# Carregamento e Preparação dos Dados (Feito uma vez)
+
+df = pd.read_csv('log_jogo5v5Final.csv')
+
+# Correção de nomes de colunas
+df.columns = df.columns.str.strip()
+print("Nomes das colunas corrigidos.\n")
+
+# Definição de Features
+
+feature_cols = ['bx', 'by']
+teams = ['y', 'b']
+robots = range(5)
+
+for team in teams:
+    for i in robots:
+        feature_cols.append(f'x_{team}{i}')
+        feature_cols.append(f'y_{team}{i}')
+
+available_features = [col for col in feature_cols if col in df.columns]
+print(f"Usando {len(available_features)} features para todas as previsões.")
+
+# Definir os alvos (robôs que queremos analisar)
+robot_targets = ['y0', 'y1', 'y2', 'y3', 'y4']
+results = {}
+
+# 3. Loop de Treinamento (Um modelo por robô)
+
+for robot_name in robot_targets:
+
+    print(f"\n=================================================")
+    print(f" 🤖 Analisando Modelo {robot_name.upper()} com SMOTE ")
+    print(f"=================================================\n")
+
+    target_col = f'state_{robot_name}'
+
+    if target_col not in df.columns:
+        print(f"Coluna alvo '{target_col}' não encontrada. Pulando robô.")
+        continue
+
+    # Limpeza (Específica para este robô)
+    data = df[available_features + [target_col]].copy()
+    data = data.dropna(subset=[target_col])
+
+    for col in available_features:
+        data[col] = pd.to_numeric(data[col], errors='coerce')
+
+    data = data.dropna(subset=available_features)
+
+    # Codificação do Alvo
+    if data.empty or data[target_col].nunique() < 2:
+        print(f"Não há dados suficientes ou classes suficientes para treinar o robô {robot_name}. Pulando.")
+        continue
+
+    le = LabelEncoder()
+    data[target_col] = le.fit_transform(data[target_col])
+    class_names = le.classes_
+
+    # Divisão de Treino e Teste
+    X = data[available_features]
+    y = data[target_col]
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+
+    print(f"Total de amostras limpas para {robot_name}: {len(data)}")
+    print(f"Amostras de treino (antes do SMOTE): {len(X_train)}")
+    print(f"Amostras de teste: {len(X_test)}\n")
+
+    # Criação do Pipeline (Scaler + SMOTE + MLP)
+
+    print("Criando o Pipeline (Scaler + SMOTE + MLP)...")
+
+    # Usamos o Pipeline da 'imblearn', que sabe como lidar com o SMOTE
+    pipeline = Pipeline([
+        ('scaler', StandardScaler()),  # Etapa 1: Normalizar os dados
+        ('smote', SMOTE(random_state=42)), # Etapa 2: Aplicar SMOTE (só nos dados de treino)
+        ('mlp', MLPClassifier(
+            hidden_layer_sizes=(100, 50),
+            max_iter=500,
+            activation='relu',
+            solver='adam',
+            random_state=42,
+            early_stopping=True,
+            validation_fraction=0.1
+        )) # Etapa 3: Treinar a Rede Neural
+    ])
+
+    # Treinamento do Modelo
+    print(f"Treinando o modelo para {robot_name}...")
+    pipeline.fit(X_train, y_train)
+    print("Treinamento concluído.\n")
+
+    # Avaliação do Modelo
+    print(f"Avaliando modelo {robot_name}...")
+    y_pred = pipeline.predict(X_test)
+
+    accuracy = accuracy_score(y_test, y_pred)
+    results[robot_name] = {'accuracy': accuracy}
+
+    print(f"\n--- Resultados para "{robot_name.upper()})
+    print(f"Acurácia Geral: {accuracy * 100:.2f}%\n")
+
+    print("Relatório de Classificação Detalhado:")
+    report = classification_report(y_test, y_pred, target_names=class_names, zero_division=0, digits=2)
+    print(report)
+
+
+print("\n=================================================")
+print(" Resumo das Acurácias Finais (com SMOTE) ")
+print("=================================================")
+for robot, res in results.items():
+    print(f"Robô {robot.upper()}: {res['accuracy'] * 100:.2f}%")
